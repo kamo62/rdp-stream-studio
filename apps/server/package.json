@@ -1,0 +1,14 @@
+{
+  "name": "@rdp-stream-studio/server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --hot src/index.ts",
+    "build": "tsc -b",
+    "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "@rdp-stream-studio/shared": "workspace:*",
+    "zod": "^4.1.13"
+  }
+}
