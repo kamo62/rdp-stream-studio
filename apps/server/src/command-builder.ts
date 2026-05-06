@@ -7,8 +7,16 @@ import {
 export type FfmpegCommandInput = {
   display: string;
   pulseSource: string;
-  musicPath?: string;
+  musicInput?: FfmpegMusicInput;
+  captureResolution?: StreamConfig["resolution"];
   stream: StreamConfig;
+};
+
+export type FfmpegMusicInput = {
+  input: string;
+  loop: boolean;
+  remote?: boolean;
+  volume: number;
 };
 
 export function buildFreeRdpArgs(config: RdpConfig): string[] {
@@ -34,17 +42,28 @@ export function buildFreeRdpArgs(config: RdpConfig): string[] {
   return args;
 }
 
-export function buildMusicInputArgs(musicPath?: string): string[] {
-  if (!musicPath) {
+export function buildMusicInputArgs(musicInput?: FfmpegMusicInput): string[] {
+  if (!musicInput) {
     return [];
   }
 
-  return ["-stream_loop", "-1", "-i", musicPath];
+  return [
+    ...(musicInput.remote
+      ? ["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5"]
+      : []),
+    ...(musicInput.loop ? ["-stream_loop", "-1"] : []),
+    "-i",
+    musicInput.input,
+  ];
 }
 
 export function buildFfmpegArgs(input: FfmpegCommandInput): string[] {
   const { stream } = input;
   const gopFrames = stream.fps * stream.keyframeSeconds;
+  const captureResolution = input.captureResolution ?? stream.resolution;
+  const shouldScale =
+    captureResolution.width !== stream.resolution.width ||
+    captureResolution.height !== stream.resolution.height;
   const baseArgs = [
     "-hide_banner",
     "-loglevel",
@@ -56,20 +75,20 @@ export function buildFfmpegArgs(input: FfmpegCommandInput): string[] {
     "-r",
     String(stream.fps),
     "-video_size",
-    `${stream.resolution.width}x${stream.resolution.height}`,
+    `${captureResolution.width}x${captureResolution.height}`,
     "-i",
     input.display,
     "-f",
     "pulse",
     "-i",
     input.pulseSource,
-    ...buildMusicInputArgs(input.musicPath),
+    ...buildMusicInputArgs(input.musicInput),
   ];
 
-  const audioArgs = input.musicPath
+  const audioArgs = input.musicInput
     ? [
         "-filter_complex",
-        "[1:a][2:a]amix=inputs=2:duration=first:dropout_transition=2[aout]",
+        `[2:a]volume=${input.musicInput.volume}[music];[1:a][music]amix=inputs=2:duration=first:dropout_transition=2[aout]`,
         "-map",
         "0:v",
         "-map",
@@ -92,6 +111,12 @@ export function buildFfmpegArgs(input: FfmpegCommandInput): string[] {
     `${stream.videoBitrateKbps}k`,
     "-bufsize",
     `${stream.videoBitrateKbps * 2}k`,
+    ...(shouldScale
+      ? [
+          "-vf",
+          `scale=${stream.resolution.width}:${stream.resolution.height}:flags=fast_bilinear`,
+        ]
+      : []),
     "-pix_fmt",
     "yuv420p",
     "-g",

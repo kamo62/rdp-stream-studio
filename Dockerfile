@@ -5,9 +5,12 @@ RUN apt-get update \
     ca-certificates \
     ffmpeg \
     freerdp3-x11 \
+    nodejs \
     novnc \
     openbox \
     pulseaudio \
+    python3 \
+    python3-venv \
     x11vnc \
     xvfb \
     websockify \
@@ -21,6 +24,9 @@ COPY apps ./apps
 COPY docker/entrypoint.sh /entrypoint.sh
 
 RUN chmod +x /entrypoint.sh \
+  && python3 -m venv /opt/yt-dlp \
+  && /opt/yt-dlp/bin/pip install --no-cache-dir yt-dlp==2026.3.17 \
+  && ln -s /opt/yt-dlp/bin/yt-dlp /usr/local/bin/yt-dlp \
   && bun install --frozen-lockfile \
   && bun run build
 

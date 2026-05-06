@@ -517,6 +517,11 @@ h1 {
   color: var(--paper-100);
 }
 
+.destinationStrip.saved {
+  border-color: rgba(242, 187, 87, 0.28);
+  color: var(--paper-200);
+}
+
 .txDot {
   flex: 0 0 auto;
   width: 6px;
@@ -528,6 +533,11 @@ h1 {
 .destinationStrip.active .txDot {
   background: var(--signal-phosphor);
   box-shadow: 0 0 12px var(--signal-phosphor);
+}
+
+.destinationStrip.saved .txDot {
+  background: var(--signal-amber);
+  box-shadow: 0 0 12px rgba(242, 187, 87, 0.5);
 }
 
 .logToggle {
@@ -783,6 +793,11 @@ h1 {
 
 input[type="file"] {
   padding-top: 11px;
+}
+
+.musicBedControls {
+  display: grid;
+  gap: var(--s-2);
 }
 
 .hint {

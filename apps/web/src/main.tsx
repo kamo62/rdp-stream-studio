@@ -5,6 +5,7 @@ import {
   EyeOff,
   Loader2,
   Radio,
+  RefreshCcw,
   SatelliteDish,
   Square,
   Trash2,
@@ -26,6 +27,21 @@ type StudioState = {
   rdp: "idle" | "connecting" | "connected" | "failed";
   stream: "idle" | "starting" | "live" | "failed";
   safeDestination?: string;
+  lastStream?: {
+    status: "active" | "interrupted";
+    safeDestination: string;
+    platform: StreamPlatform;
+    ingestUrl: string;
+    resolution: { width: number; height: number };
+    fps: number;
+    videoBitrateKbps: number;
+    audioBitrateKbps: number;
+    keyframeSeconds: number;
+    musicSourceKind: MusicSourceMode;
+    updatedAt: string;
+    reason?: string;
+    canRestart: boolean;
+  };
   logs: string[];
 };
 
@@ -42,18 +58,24 @@ type RdpFormState = {
 };
 
 type StreamPlatform = "youtube" | "twitch" | "generic";
+type MusicSourceMode = "url" | "uploaded" | "none";
+type StreamResolutionProfile = "1080p" | "720p";
 
 type StreamFormState = {
   platform: StreamPlatform;
   ingestUrl: string;
   streamKey: string;
+  resolutionProfile: StreamResolutionProfile;
   videoBitrateKbps: string;
+  musicSourceMode: MusicSourceMode;
+  musicUrl: string;
 };
 
 type PendingAction =
   | "connect"
   | "disconnect"
   | "startStream"
+  | "restartStream"
   | "stopStream"
   | "uploadMusic";
 
@@ -82,11 +104,37 @@ const platformIngestUrls: Record<StreamPlatform, string> = {
   twitch: "rtmp://live.twitch.tv/app",
   generic: "",
 };
+const streamProfiles: Record<
+  StreamResolutionProfile,
+  {
+    label: string;
+    width: number;
+    height: number;
+    bitrateKbps: string;
+  }
+> = {
+  "1080p": {
+    label: "1080p30 · ideal",
+    width: 1920,
+    height: 1080,
+    bitrateKbps: "6000",
+  },
+  "720p": {
+    label: "720p30 · safer",
+    width: 1280,
+    height: 720,
+    bitrateKbps: "3500",
+  },
+};
+const defaultMusicUrl = "https://www.youtube.com/watch?v=CBSlu_VMS9U";
 const defaultStreamForm: StreamFormState = {
   platform: "youtube",
   ingestUrl: platformIngestUrls.youtube,
   streamKey: "",
+  resolutionProfile: "1080p",
   videoBitrateKbps: "6000",
+  musicSourceMode: "url",
+  musicUrl: defaultMusicUrl,
 };
 const rdpFormStorageKey = "rdp-stream-studio:rdp-form";
 const streamFormStorageKey = "rdp-stream-studio:stream-form";
@@ -303,14 +351,32 @@ function App() {
 
   async function startStream() {
     await runAction("startStream", async () => {
-      const uploadedMusicPath = await uploadSelectedMusic();
+      const profile = streamProfiles[streamForm.resolutionProfile];
+      const uploadedMusicPath =
+        streamForm.musicSourceMode === "uploaded"
+          ? await uploadSelectedMusic()
+          : undefined;
+      const musicSource =
+        streamForm.musicSourceMode === "url" && streamForm.musicUrl.trim()
+          ? {
+              kind: "url",
+              url: streamForm.musicUrl.trim(),
+              volume: 0.3,
+            }
+          : streamForm.musicSourceMode === "uploaded" && uploadedMusicPath
+            ? {
+                kind: "uploaded",
+                path: uploadedMusicPath,
+                volume: 0.3,
+              }
+            : { kind: "none", volume: 0.3 };
       const next = await postJson<StudioState>("/api/stream/start", {
-        musicPath: uploadedMusicPath,
+        musicSource,
         stream: {
           platform: streamForm.platform,
           ingestUrl: streamForm.ingestUrl,
           streamKey: streamForm.streamKey,
-          resolution: { width: 1920, height: 1080 },
+          resolution: { width: profile.width, height: profile.height },
           fps: 30,
           videoBitrateKbps: Number(streamForm.videoBitrateKbps),
           audioBitrateKbps: 128,
@@ -325,6 +391,13 @@ function App() {
   async function stopStream() {
     await runAction("stopStream", async () => {
       const next = await postJson<StudioState>("/api/stream/stop");
+      setState(next);
+    });
+  }
+
+  async function restartStream() {
+    await runAction("restartStream", async () => {
+      const next = await postJson<StudioState>("/api/stream/restart-last");
       setState(next);
     });
   }
@@ -350,6 +423,14 @@ function App() {
   function changeIngestUrl(value: string) {
     setCustomIngestUrl(value !== platformIngestUrls[streamForm.platform]);
     setStreamForm({ ...streamForm, ingestUrl: value });
+  }
+
+  function changeStreamProfile(profile: StreamResolutionProfile) {
+    setStreamForm({
+      ...streamForm,
+      resolutionProfile: profile,
+      videoBitrateKbps: streamProfiles[profile].bitrateKbps,
+    });
   }
 
   function clearMusicFile() {
@@ -394,6 +475,7 @@ function App() {
           onStartRdp={() => setModal("rdp")}
           onStopRdp={() => void disconnectRdp()}
           onStartStream={() => setModal("stream")}
+          onRestartStream={() => void restartStream()}
           onStopStream={() => void stopStream()}
           onToggleLogs={() => setLogsOpen((open) => !open)}
         />
@@ -510,6 +592,23 @@ function App() {
                 }
               />
             </Field>
+            <Field label="Output Profile">
+              <select
+                name="resolutionProfile"
+                value={streamForm.resolutionProfile}
+                onChange={(event) =>
+                  changeStreamProfile(
+                    event.currentTarget.value as StreamResolutionProfile,
+                  )
+                }
+              >
+                {Object.entries(streamProfiles).map(([value, profile]) => (
+                  <option key={value} value={value}>
+                    {profile.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
             <Field label="Video Bitrate" unit="KBPS">
               <input
                 name="videoBitrateKbps"
@@ -526,21 +625,66 @@ function App() {
               />
             </Field>
             <Field label="Music Bed">
-              <input
-                name="file"
-                type="file"
-                accept="audio/*"
-                onChange={(event) => setMusicFile(event.currentTarget.files?.[0])}
-              />
-              {musicFile ? (
-                <button type="button" className="fileChip" onClick={clearMusicFile}>
-                  <ChevronDown size={14} />
-                  {musicFile.name} · {formatBytes(musicFile.size)}
-                  <X size={14} />
-                </button>
-              ) : (
-                <p className="hint">Optional background music loop.</p>
-              )}
+              <div className="musicBedControls">
+                <select
+                  name="musicSourceMode"
+                  value={streamForm.musicSourceMode}
+                  onChange={(event) =>
+                    setStreamForm({
+                      ...streamForm,
+                      musicSourceMode: event.currentTarget.value as MusicSourceMode,
+                    })
+                  }
+                >
+                  <option value="url">YouTube URL</option>
+                  <option value="uploaded">Upload audio</option>
+                  <option value="none">Off</option>
+                </select>
+                {streamForm.musicSourceMode === "url" ? (
+                  <>
+                    <input
+                      name="musicUrl"
+                      type="url"
+                      value={streamForm.musicUrl}
+                      onChange={(event) =>
+                        setStreamForm({
+                          ...streamForm,
+                          musicUrl: event.currentTarget.value,
+                        })
+                      }
+                    />
+                    <p className="hint">Music provided by Lofi Girl: youtube.com/@LofiGirl</p>
+                  </>
+                ) : null}
+                {streamForm.musicSourceMode === "uploaded" ? (
+                  <>
+                    <input
+                      name="file"
+                      type="file"
+                      accept="audio/*"
+                      onChange={(event) =>
+                        setMusicFile(event.currentTarget.files?.[0])
+                      }
+                    />
+                    {musicFile ? (
+                      <button
+                        type="button"
+                        className="fileChip"
+                        onClick={clearMusicFile}
+                      >
+                        <ChevronDown size={14} />
+                        {musicFile.name} · {formatBytes(musicFile.size)}
+                        <X size={14} />
+                      </button>
+                    ) : (
+                      <p className="hint">Optional background music loop.</p>
+                    )}
+                  </>
+                ) : null}
+                {streamForm.musicSourceMode === "none" ? (
+                  <p className="hint">No background music.</p>
+                ) : null}
+              </div>
             </Field>
             <div className="modalActions">
               <button type="button" className="ghostButton" onClick={() => setModal(undefined)}>
@@ -654,6 +798,7 @@ function TransportBar({
   onStartRdp,
   onStopRdp,
   onStartStream,
+  onRestartStream,
   onStopStream,
   onToggleLogs,
 }: {
@@ -664,10 +809,23 @@ function TransportBar({
   onStartRdp: () => void;
   onStopRdp: () => void;
   onStartStream: () => void;
+  onRestartStream: () => void;
   onStopStream: () => void;
   onToggleLogs: () => void;
 }) {
   const canStream = state.rdp === "connected";
+  const canRestartLast =
+    canStream &&
+    state.stream !== "live" &&
+    state.stream !== "starting" &&
+    Boolean(state.lastStream?.canRestart);
+  const visibleDestination = state.safeDestination ?? state.lastStream?.safeDestination;
+  const visibleBitrate = state.lastStream
+    ? `${state.lastStream.videoBitrateKbps} KBPS · ${state.lastStream.resolution.height}P${state.lastStream.fps}${
+        state.stream === "live" ? "" : ` · SAVED ${state.lastStream.status.toUpperCase()}`
+      }`
+    : "6000 KBPS · 1080P30";
+
   return (
     <footer className="transport">
       <div className="buttonBank">
@@ -709,13 +867,28 @@ function TransportBar({
             Start Stream
           </button>
         )}
+        {canRestartLast ? (
+          <button
+            type="button"
+            className="ghostButton"
+            disabled={pending === "restartStream"}
+            onClick={onRestartStream}
+          >
+            {pending === "restartStream" ? <Loader2 className="spin" size={17} /> : <RefreshCcw size={17} />}
+            Restart Saved
+          </button>
+        ) : null}
       </div>
 
-      <div className={`destinationStrip ${state.stream === "live" ? "active" : ""}`}>
+      <div
+        className={`destinationStrip ${state.stream === "live" ? "active" : ""} ${
+          state.lastStream && state.stream !== "live" ? "saved" : ""
+        }`}
+      >
         <span className="txDot" />
         OUT →
-        <strong>{state.safeDestination ?? "NO ACTIVE RTMP DESTINATION"}</strong>
-        <span>· 6000 KBPS · 1080P30</span>
+        <strong>{visibleDestination ?? "NO ACTIVE RTMP DESTINATION"}</strong>
+        <span>· {visibleBitrate}</span>
       </div>
 
       <button type="button" className="logToggle" onClick={onToggleLogs}>

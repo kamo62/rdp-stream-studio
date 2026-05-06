@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildSafeStreamDestination,
+  parseMusicSource,
   parseRdpConfig,
   parseStreamConfig,
   redactSecrets,
@@ -55,5 +56,32 @@ describe("shared config schemas", () => {
         "abc123",
       ]),
     ).toBe("xfreerdp /p:******** streaming to rtmp://x/live/********");
+  });
+
+  test("normalizes optional music sources", () => {
+    expect(parseMusicSource(undefined)).toEqual({ kind: "none", volume: 0.3 });
+    expect(
+      parseMusicSource({ kind: "uploaded", path: "/data/music/theme.mp3" }),
+    ).toEqual({
+      kind: "uploaded",
+      path: "/data/music/theme.mp3",
+      volume: 0.3,
+    });
+    expect(
+      parseMusicSource({
+        kind: "url",
+        url: "https://www.youtube.com/watch?v=CBSlu_VMS9U",
+        volume: 0.45,
+      }),
+    ).toEqual({
+      kind: "url",
+      url: "https://www.youtube.com/watch?v=CBSlu_VMS9U",
+      volume: 0.45,
+    });
+  });
+
+  test("requires a path or URL for active music sources", () => {
+    expect(() => parseMusicSource({ kind: "uploaded" })).toThrow("path");
+    expect(() => parseMusicSource({ kind: "url" })).toThrow("url");
   });
 });

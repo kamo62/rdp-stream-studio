@@ -2,9 +2,9 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { StudioProcessManager } from "./process-manager";
 
-const manager = new StudioProcessManager();
 const port = Number(process.env.PORT ?? 3000);
 const uploadDir = process.env.MUSIC_UPLOAD_DIR ?? "/tmp/rdp-stream-studio";
+const manager = new StudioProcessManager({ musicCacheDir: uploadDir });
 const webDistDir =
   process.env.WEB_DIST_DIR ?? new URL("../../web/dist", import.meta.url).pathname;
 const publicNoVncUrl = process.env.PUBLIC_NOVNC_URL;
@@ -129,9 +129,20 @@ const server = Bun.serve({
       if (url.pathname === "/api/stream/start" && request.method === "POST") {
         const body = (await parseJson(request)) as {
           stream?: unknown;
+          musicSource?: unknown;
           musicPath?: string;
         };
-        return jsonResponse(await manager.startStream(body.stream, body.musicPath));
+        const musicSource =
+          body.musicSource ??
+          (body.musicPath ? { kind: "uploaded", path: body.musicPath } : undefined);
+        return jsonResponse(await manager.startStream(body.stream, musicSource));
+      }
+
+      if (
+        url.pathname === "/api/stream/restart-last" &&
+        request.method === "POST"
+      ) {
+        return jsonResponse(await manager.restartLastStream());
       }
 
       if (url.pathname === "/api/stream/stop" && request.method === "POST") {
