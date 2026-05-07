@@ -815,7 +815,6 @@ function TransportBar({
 }) {
   const canStream = state.rdp === "connected";
   const canRestartLast =
-    canStream &&
     state.stream !== "live" &&
     state.stream !== "starting" &&
     Boolean(state.lastStream?.canRestart);

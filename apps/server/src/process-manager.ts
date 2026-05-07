@@ -135,8 +135,13 @@ export class StudioProcessManager {
 
   async connect(input: unknown): Promise<SessionState> {
     const config = parseRdpConfig(input);
+    this.resetAutoRestartBudget();
+    this.clearStreamStableTimer();
     this.rdpConfig = config;
     this.rdpState = "connecting";
+    if (this.streamState === "failed") {
+      this.streamState = "idle";
+    }
     this.log("Starting virtual RDP session.");
 
     await this.stopProcess("xfreerdp", { intentional: true });
@@ -210,6 +215,11 @@ export class StudioProcessManager {
   ): Promise<SessionState> {
     if (!this.lastStreamRecord || this.lastStreamRecord.status === "stopped") {
       throw new Error("No saved stream details are available to restart.");
+    }
+
+    if (!options.autoRestart) {
+      this.resetAutoRestartBudget();
+      this.clearStreamStableTimer();
     }
 
     if (this.rdpState !== "connected") {
@@ -489,6 +499,11 @@ export class StudioProcessManager {
       clearTimeout(this.autoRestartTimer);
       this.autoRestartTimer = undefined;
     }
+  }
+
+  private resetAutoRestartBudget(): void {
+    this.clearAutoRestartTimer();
+    this.autoRestartAttempts = 0;
   }
 
   private clearStreamStableTimer(): void {
