@@ -5,19 +5,27 @@ export DISPLAY="${DISPLAY_ID:-:99}"
 export PULSE_SERVER="${PULSE_SERVER:-unix:/tmp/pulse/native}"
 
 mkdir -p /tmp/pulse /tmp/rdp-stream-studio
+rm -f /tmp/pulse/native
 
 pulseaudio \
   --daemonize=yes \
   --exit-idle-time=-1 \
   --log-target=stderr \
-  --load="module-native-protocol-unix socket=/tmp/pulse/native auth-anonymous=1" || true
+  --load="module-native-protocol-unix socket=/tmp/pulse/native auth-anonymous=1"
 
+pulse_ready=false
 for _ in $(seq 1 30); do
   if pactl --server="$PULSE_SERVER" info >/dev/null 2>&1; then
+    pulse_ready=true
     break
   fi
   sleep 0.2
 done
+
+if [ "$pulse_ready" != true ]; then
+  echo "Timed out waiting for PulseAudio server $PULSE_SERVER" >&2
+  exit 1
+fi
 
 pactl --server="$PULSE_SERVER" load-module module-null-sink sink_name=rdp_stream sink_properties=device.description=RDP-Stream || true
 
