@@ -74,6 +74,7 @@ export class StudioProcessManager {
   private readonly intentionallyStoppedProcesses = new WeakSet<Subprocess>();
   private autoRestartTimer?: ReturnType<typeof setTimeout>;
   private streamStableTimer?: ReturnType<typeof setTimeout>;
+  private streamStartPromise?: Promise<SessionState>;
   private autoRestartAttempts = 0;
   private rdpConfig?: RdpConfig;
   private streamConfig?: StreamConfig;
@@ -162,6 +163,27 @@ export class StudioProcessManager {
   }
 
   async startStream(
+    input: unknown,
+    musicSource?: unknown,
+    options: { autoRestart?: boolean } = {},
+  ): Promise<SessionState> {
+    if (this.streamStartPromise) {
+      this.log("Stream start already in progress; joining existing start.");
+      return this.streamStartPromise;
+    }
+
+    const startPromise = this.startStreamNow(input, musicSource, options);
+    this.streamStartPromise = startPromise;
+    try {
+      return await startPromise;
+    } finally {
+      if (this.streamStartPromise === startPromise) {
+        this.streamStartPromise = undefined;
+      }
+    }
+  }
+
+  private async startStreamNow(
     input: unknown,
     musicSource?: unknown,
     options: { autoRestart?: boolean } = {},
@@ -293,9 +315,12 @@ export class StudioProcessManager {
 
     void child.exited.then((code) => {
       const managed = this.processes.get(name);
+      if (managed?.process !== child) {
+        this.log(`${name} exited with code ${code} for a stale process.`);
+        return;
+      }
       const intentionalStop =
-        managed?.intentionalStop ??
-        this.intentionallyStoppedProcesses.has(child);
+        managed.intentionalStop ?? this.intentionallyStoppedProcesses.has(child);
       this.log(`${name} exited with code ${code}.`);
       this.processes.delete(name);
       if (name === "xfreerdp" && this.rdpState !== "idle") {
